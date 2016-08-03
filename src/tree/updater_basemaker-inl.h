@@ -263,10 +263,10 @@ class BaseMaker: public TreeUpdater {
       auto it = std::lower_bound(sorted_split_set.begin(), sorted_split_set.end(), fid);
 
       if (it != sorted_split_set.end() && *it == fid) {
-        const bst_omp_uint ndata = static_cast<bst_omp_uint>(col.length);
+        const bst_omp_uint ndata = static_cast<bst_omp_uint>(col.length); // size of col is number of data
         #pragma omp parallel for schedule(static)
         for (bst_omp_uint j = 0; j < ndata; ++j) {
-          const bst_uint ridx = col[j].index;
+          const bst_uint ridx = col[j].index; // data index
           const float fvalue = col[j].fvalue;
           const int nid = this->DecodePosition(ridx);
           CHECK(tree[nid].is_leaf());
@@ -299,7 +299,7 @@ class BaseMaker: public TreeUpdater {
     for (size_t i = 0; i < nodes.size(); ++i) {
       const int nid = nodes[i];
       if (!tree[nid].is_leaf()) {
-        fsplits.push_back(tree[nid].split_index());
+        fsplits.push_back(tree[nid].split_index()); // push feature index
       }
     }
     std::sort(fsplits.begin(), fsplits.end());

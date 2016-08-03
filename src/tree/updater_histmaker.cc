@@ -63,13 +63,13 @@ class HistMaker: public BaseMaker {
   /*! \brief a set of histograms from different index */
   struct HistSet {
     /*! \brief the index pointer of each histunit */
-    const unsigned *rptr;
+    const unsigned *rptr; // pointer to each feature
     /*! \brief cutting points in each histunit */
     const bst_float *cut;
     /*! \brief data in different hist unit */
     std::vector<TStats> data;
     /*! \brief */
-    inline HistUnit operator[](size_t fid) {
+    inline HistUnit operator[](size_t fid) {  // return each feature's histunit
       return HistUnit(cut + rptr[fid],
                       &data[0] + rptr[fid],
                       rptr[fid+1] - rptr[fid]);
@@ -88,7 +88,7 @@ class HistMaker: public BaseMaker {
       hset.resize(nthread);
       // cleanup statistics
       for (int tid = 0; tid < nthread; ++tid) {
-        for (size_t i = 0; i < hset[tid].data.size(); ++i) {
+        for (size_t i = 0; i < hset[tid].data.size(); ++i) {  // each feature's histunit in a node
           hset[tid].data[i].Clear();
         }
         hset[tid].rptr = dmlc::BeginPtr(rptr);
@@ -100,7 +100,7 @@ class HistMaker: public BaseMaker {
     inline void Aggregate() {
       bst_omp_uint nsize = static_cast<bst_omp_uint>(cut.size());
       #pragma omp parallel for schedule(static)
-      for (bst_omp_uint i = 0; i < nsize; ++i) {
+      for (bst_omp_uint i = 0; i < nsize; ++i) {  // i can be seen as the index of feature
         for (size_t tid = 1; tid < hset.size(); ++tid) {
           hset[0].data[i].Add(hset[tid].data[i]);
         }
@@ -184,27 +184,27 @@ class HistMaker: public BaseMaker {
     if (hist.size == 0) return;
 
     double root_gain = node_sum.CalcGain(param);
-    TStats s(param), c(param);
-    for (bst_uint i = 0; i < hist.size; ++i) {
+    TStats s(param), c(param);  // s: left child, c: right child
+    for (bst_uint i = 0; i < hist.size; ++i) {  // enumerate from left to right
       s.Add(hist.data[i]);
       if (s.sum_hess >= param.min_child_weight) {
-        c.SetSubstract(node_sum, s);
+        c.SetSubstract(node_sum, s);  // c = node - s
         if (c.sum_hess >= param.min_child_weight) {
           double loss_chg = s.CalcGain(param) + c.CalcGain(param) - root_gain;
-          if (best->Update(static_cast<float>(loss_chg), fid, hist.cut[i], false)) {
+          if (best->Update(static_cast<float>(loss_chg), fid, hist.cut[i], false)) {  // false means default right
             *left_sum = s;
           }
         }
       }
     }
     s.Clear();
-    for (bst_uint i = hist.size - 1; i != 0; --i) {
+    for (bst_uint i = hist.size - 1; i != 0; --i) { // enumerate from right to left
       s.Add(hist.data[i]);
       if (s.sum_hess >= param.min_child_weight) {
         c.SetSubstract(node_sum, s);
         if (c.sum_hess >= param.min_child_weight) {
           double loss_chg = s.CalcGain(param) + c.CalcGain(param) - root_gain;
-          if (best->Update(static_cast<float>(loss_chg), fid, hist.cut[i-1], true)) {
+          if (best->Update(static_cast<float>(loss_chg), fid, hist.cut[i-1], true)) { // true means default left
             *left_sum = c;
           }
         }
@@ -218,51 +218,51 @@ class HistMaker: public BaseMaker {
                         RegTree *p_tree) {
     const size_t num_feature = fset.size();
     // get the best split condition for each node
-    std::vector<SplitEntry> sol(qexpand.size());
+    std::vector<SplitEntry> sol(qexpand.size());  // the split info of node needing expanding
     std::vector<TStats> left_sum(qexpand.size());
-    bst_omp_uint nexpand = static_cast<bst_omp_uint>(qexpand.size());
+    bst_omp_uint nexpand = static_cast<bst_omp_uint>(qexpand.size()); // number of expand node
     #pragma omp parallel for schedule(dynamic, 1)
     for (bst_omp_uint wid = 0; wid < nexpand; ++wid) {
-      const int nid = qexpand[wid];
+      const int nid = qexpand[wid]; // node id
       CHECK_EQ(node2workindex[nid], static_cast<int>(wid));
-      SplitEntry &best = sol[wid];
-      TStats &node_sum = wspace.hset[0][num_feature + wid * (num_feature + 1)].data[0];
-      for (size_t i = 0; i < fset.size(); ++i) {
+      SplitEntry &best = sol[wid];  // best result of each node
+      TStats &node_sum = wspace.hset[0][num_feature + wid * (num_feature + 1)].data[0]; // wspace: workspace of thread
+      for (size_t i = 0; i < fset.size(); ++i) {  // loop over feature, get each feature's split on each node
         EnumerateSplit(this->wspace.hset[0][i + wid * (num_feature+1)],
                        node_sum, fset[i], &best, &left_sum[wid]);
       }
     }
     // get the best result, we can synchronize the solution
-    for (bst_omp_uint wid = 0; wid < nexpand; ++wid) {
+    for (bst_omp_uint wid = 0; wid < nexpand; ++wid) {  // loop over node
       const int nid = qexpand[wid];
       const SplitEntry &best = sol[wid];
-      const TStats &node_sum = wspace.hset[0][num_feature + wid * (num_feature + 1)].data[0];
+      const TStats &node_sum = wspace.hset[0][num_feature + wid * (num_feature + 1)].data[0]; // data[0] stores the summary statistic
       this->SetStats(p_tree, nid, node_sum);
       // set up the values
       p_tree->stat(nid).loss_chg = best.loss_chg;
       // now we know the solution in snode[nid], set split
       if (best.loss_chg > rt_eps) {
-        p_tree->AddChilds(nid);
+        p_tree->AddChilds(nid); // add node's children
         (*p_tree)[nid].set_split(best.split_index(),
-                                 best.split_value, best.default_left());
+                                 best.split_value, best.default_left());  // set the spilt index (feature id), and split value
         // mark right child as 0, to indicate fresh leaf
         (*p_tree)[(*p_tree)[nid].cleft()].set_leaf(0.0f, 0);
         (*p_tree)[(*p_tree)[nid].cright()].set_leaf(0.0f, 0);
         // right side sum
         TStats right_sum;
         right_sum.SetSubstract(node_sum, left_sum[wid]);
-        this->SetStats(p_tree, (*p_tree)[nid].cleft(), left_sum[wid]);
+        this->SetStats(p_tree, (*p_tree)[nid].cleft(), left_sum[wid]);  // set the stats of left and right children
         this->SetStats(p_tree, (*p_tree)[nid].cright(), right_sum);
       } else {
-        (*p_tree)[nid].set_leaf(p_tree->stat(nid).base_weight * param.learning_rate);
+        (*p_tree)[nid].set_leaf(p_tree->stat(nid).base_weight * param.learning_rate); // set the node to be leaf, and set weight
       }
     }
   }
 
-  inline void SetStats(RegTree *p_tree, int nid, const TStats &node_sum) {
-    p_tree->stat(nid).base_weight = static_cast<float>(node_sum.CalcWeight(param));
-    p_tree->stat(nid).sum_hess = static_cast<float>(node_sum.sum_hess);
-    node_sum.SetLeafVec(param, p_tree->leafvec(nid));
+  inline void SetStats(RegTree *p_tree, int nid, const TStats &node_sum) {  // set the stats of a node
+    p_tree->stat(nid).base_weight = static_cast<float>(node_sum.CalcWeight(param)); // set the weight
+    p_tree->stat(nid).sum_hess = static_cast<float>(node_sum.sum_hess); // set the sum of hess
+    node_sum.SetLeafVec(param, p_tree->leafvec(nid)); // set the leaf vector of the node, have not implemented yet
   }
 };
 
@@ -284,7 +284,7 @@ class CQHistMaker: public HistMaker<TStats> {
                     const std::vector<bst_gpair> &gpair,
                     const MetaInfo &info,
                     const bst_uint ridx) {
-      while (istart < hist.size && !(fv < hist.cut[istart])) ++istart;
+      while (istart < hist.size && !(fv < hist.cut[istart])) ++istart;  // loop over all the cut value
       CHECK_NE(istart, hist.size);
       hist.data[istart].Add(gpair, info, ridx);
     }
@@ -343,10 +343,10 @@ class CQHistMaker: public HistMaker<TStats> {
       while (iter->Next()) {
         const ColBatch &batch = iter->Value();
         // start enumeration
-        const bst_omp_uint nsize = static_cast<bst_omp_uint>(batch.size);
+        const bst_omp_uint nsize = static_cast<bst_omp_uint>(batch.size); // number of cols (features)
         #pragma omp parallel for schedule(dynamic, 1)
-        for (bst_omp_uint i = 0; i < nsize; ++i) {
-          int offset = feat2workindex[batch.col_index[i]];
+        for (bst_omp_uint i = 0; i < nsize; ++i) {  // loop over each col in the batch
+          int offset = feat2workindex[batch.col_index[i]];  // col_index is feature index of a col
           if (offset >= 0) {
             this->UpdateHistCol(gpair, batch[i], info, tree,
                                 fset, offset,
@@ -357,9 +357,9 @@ class CQHistMaker: public HistMaker<TStats> {
       // update node statistics.
       this->GetNodeStats(gpair, *p_fmat, tree,
                          &thread_stats, &node_stats);
-      for (size_t i = 0; i < this->qexpand.size(); ++i) {
+      for (size_t i = 0; i < this->qexpand.size(); ++i) { // loop over node
         const int nid = this->qexpand[i];
-        const int wid = this->node2workindex[nid];
+        const int wid = this->node2workindex[nid];  // node's position in the work set
         this->wspace.hset[0][fset.size() + wid * (fset.size()+1)]
             .data[0] = node_stats[nid];
       }
@@ -376,7 +376,7 @@ class CQHistMaker: public HistMaker<TStats> {
   }
   void ResetPositionAfterSplit(DMatrix *p_fmat,
                                const RegTree &tree) override {
-    this->GetSplitSet(this->qexpand, tree, &fsplit_set);
+    this->GetSplitSet(this->qexpand, tree, &fsplit_set);  // fsplit_set stores the feature used to perform split
   }
   void ResetPosAndPropose(const std::vector<bst_gpair> &gpair,
                           DMatrix *p_fmat,
@@ -388,23 +388,23 @@ class CQHistMaker: public HistMaker<TStats> {
     std::fill(feat2workindex.begin(), feat2workindex.end(), -1);
     work_set.clear();
     for (size_t i = 0; i < fset.size(); ++i) {
-      if (feat_helper.Type(fset[i]) == 2) {
+      if (feat_helper.Type(fset[i]) == 2) { // get feature type, 0:empty 1:binary 2:real
         feat2workindex[fset[i]] = static_cast<int>(work_set.size());
-        work_set.push_back(fset[i]);
+        work_set.push_back(fset[i]);  // work set stores feature ids which need to be processed
       } else {
-        feat2workindex[fset[i]] = -2;
+        feat2workindex[fset[i]] = -2; // for empty and binary feature, do not create work
       }
     }
     const size_t work_set_size = work_set.size();
 
-    sketchs.resize(this->qexpand.size() * work_set_size);
+    sketchs.resize(this->qexpand.size() * work_set_size); // sketch number = node number * real feature number
     for (size_t i = 0; i < sketchs.size(); ++i) {
-      sketchs[i].Init(info.num_row, this->param.sketch_eps);
+      sketchs[i].Init(info.num_row, this->param.sketch_eps);  // init of a sketch with data number and eps
     }
     // intitialize the summary array
     summary_array.resize(sketchs.size());
     // setup maximum size
-    unsigned max_size = this->param.max_sketch_size();
+    unsigned max_size = this->param.max_sketch_size();  // max size of a sketch
     for (size_t i = 0; i < sketchs.size(); ++i) {
       summary_array[i].Reserve(max_size);
     }
@@ -414,7 +414,7 @@ class CQHistMaker: public HistMaker<TStats> {
 
       // TWOPASS: use the real set + split set in the column iteration.
       this->SetDefaultPostion(p_fmat, tree);
-      work_set.insert(work_set.end(), fsplit_set.begin(), fsplit_set.end());
+      work_set.insert(work_set.end(), fsplit_set.begin(), fsplit_set.end());  // fsplit_set is candidate features
       std::sort(work_set.begin(), work_set.end());
       work_set.resize(std::unique(work_set.begin(), work_set.end()) - work_set.begin());
 
@@ -427,10 +427,10 @@ class CQHistMaker: public HistMaker<TStats> {
         this->CorrectNonDefaultPositionByBatch(batch, fsplit_set, tree);
 
         // start enumeration
-        const bst_omp_uint nsize = static_cast<bst_omp_uint>(batch.size);
+        const bst_omp_uint nsize = static_cast<bst_omp_uint>(batch.size); // nsize is the number of cols
         #pragma omp parallel for schedule(dynamic, 1)
         for (bst_omp_uint i = 0; i < nsize; ++i) {
-          int offset = feat2workindex[batch.col_index[i]];
+          int offset = feat2workindex[batch.col_index[i]];  // work idex
           if (offset >= 0) {
             this->UpdateSketchCol(gpair, batch[i], tree,
                                   work_set_size, offset,
@@ -453,15 +453,15 @@ class CQHistMaker: public HistMaker<TStats> {
     this->wspace.cut.clear();
     this->wspace.rptr.clear();
     this->wspace.rptr.push_back(0);
-    for (size_t wid = 0; wid < this->qexpand.size(); ++wid) {
-      for (size_t i = 0; i < fset.size(); ++i) {
-        int offset = feat2workindex[fset[i]];
+    for (size_t wid = 0; wid < this->qexpand.size(); ++wid) { // loop over expand node
+      for (size_t i = 0; i < fset.size(); ++i) {  // loop over feature in fset
+        int offset = feat2workindex[fset[i]]; // work index, size is feature number
         if (offset >= 0) {
           const WXQSketch::Summary &a = summary_array[wid * work_set_size + offset];
           for (size_t i = 1; i < a.size; ++i) {
             bst_float cpt = a.data[i].value - rt_eps;
             if (i == 1 || cpt > this->wspace.cut.back()) {
-              this->wspace.cut.push_back(cpt);
+              this->wspace.cut.push_back(cpt);  // push cut value
             }
           }
           // push a value that is greater than anything
@@ -473,9 +473,9 @@ class CQHistMaker: public HistMaker<TStats> {
           }
           this->wspace.rptr.push_back(static_cast<unsigned>(this->wspace.cut.size()));
         } else {
-          CHECK_EQ(offset, -2);
-          bst_float cpt = feat_helper.MaxValue(fset[i]);
-          this->wspace.cut.push_back(cpt + fabs(cpt) + rt_eps);
+          CHECK_EQ(offset, -2); // -2 means missing value or binary value
+          bst_float cpt = feat_helper.MaxValue(fset[i]);  // get the max value of the feature
+          this->wspace.cut.push_back(cpt + fabs(cpt) + rt_eps); //????
           this->wspace.rptr.push_back(static_cast<unsigned>(this->wspace.cut.size()));
         }
       }
@@ -484,7 +484,7 @@ class CQHistMaker: public HistMaker<TStats> {
       this->wspace.rptr.push_back(static_cast<unsigned>(this->wspace.cut.size()));
     }
     CHECK_EQ(this->wspace.rptr.size(),
-             (fset.size() + 1) * this->qexpand.size() + 1);
+             (fset.size() + 1) * this->qexpand.size() + 1); // push one for each feature, and push one for each node
   }
 
   inline void UpdateHistCol(const std::vector<bst_gpair> &gpair,
@@ -621,11 +621,11 @@ class CQHistMaker: public HistMaker<TStats> {
   // cached dmatrix where we initialized the feature on.
   const DMatrix* cache_dmatrix_;
   // feature helper
-  BaseMaker::FMetaHelper feat_helper;
+  BaseMaker::FMetaHelper feat_helper; // used to sample feature et. al.
   // temp space to map feature id to working index
   std::vector<int> feat2workindex;
   // set of index from fset that are current work set
-  std::vector<bst_uint> work_set;
+  std::vector<bst_uint> work_set; // map feature idex to work index
   // set of index from that are split candidates.
   std::vector<bst_uint> fsplit_set;
   // thread temp data
@@ -686,7 +686,7 @@ class GlobalProposalHistMaker: public CQHistMaker<TStats> {
     const MetaInfo &info = p_fmat->info();
     // fill in reverse map
     this->feat2workindex.resize(tree.param.num_feature);
-    this->work_set = fset;
+    this->work_set = fset;  // work set = fset
     std::fill(this->feat2workindex.begin(), this->feat2workindex.end(), -1);
     for (size_t i = 0; i < fset.size(); ++i) {
       this->feat2workindex[fset[i]] = static_cast<int>(i);
